@@ -102,10 +102,10 @@ def parse_batch_date(text: str) -> str:
 
 
 def parse_report(file_bytes: bytes, filename: str) -> pd.DataFrame:
-    """Parse a single PTI report and return a DataFrame of test results."""
+    """Parse a single report and return a DataFrame of test results."""
     text = ""
 
-    # Try ZIP format first (some PTI exports are ZIP archives with .pdf extension)
+    # Try ZIP format first (some exports are ZIP archives with .pdf extension)
     try:
         text = extract_text_from_zip(file_bytes)
     except zipfile.BadZipFile:
@@ -168,10 +168,10 @@ st.caption("Upload pdf filter results, can export/copy CSV")
 
 # ── File upload ───────────────────────────────────────────────────────
 uploaded_files = st.file_uploader(
-    "Upload PTI Report PDFs",
+    "Upload Report PDFs",
     type=["pdf"],
     accept_multiple_files=True,
-    help="These are ZIP-based PTI report files with a .pdf extension.",
+    help="These are ZIP-based report files with a .pdf extension.",
 )
 
 if uploaded_files:
@@ -193,7 +193,7 @@ if uploaded_files:
 df_all = st.session_state.data
 
 if df_all.empty:
-    st.info("Upload one or more PTI report PDFs to get started.")
+    st.info("Upload one or more PDFs to get started.")
     st.stop()
 
 
@@ -270,17 +270,4 @@ else:
         use_container_width=True,
         height=500,
         hide_index=True,
-    )
-
-
-# ── CSV download ──────────────────────────────────────────────────────
-if not df.empty:
-    csv_buffer = io.StringIO()
-    df.to_csv(csv_buffer, index=False)
-
-    st.download_button(
-        label=f"📥 Download CSV ({len(df)} rows)",
-        data=csv_buffer.getvalue(),
-        file_name="pti_results.csv",
-        mime="text/csv",
     )
