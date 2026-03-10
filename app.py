@@ -5,7 +5,6 @@ Program is a parser to take a specific pdf and let you easily copy/filter it
 
 import io
 import re
-import zipfile
 
 import pandas as pd
 import pdfplumber
@@ -40,16 +39,6 @@ ROW_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-
-def extract_text_from_zip(file_bytes: bytes) -> str:
-    """Extract and concatenate all .txt files from a ZIP archive."""
-    full_text = ""
-    with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-        txt_files = sorted([n for n in z.namelist() if n.endswith(".txt")])
-        for name in txt_files:
-            content = z.read(name).decode("utf-8", errors="replace")
-            full_text += content + "\n\n"
-    return full_text
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -105,19 +94,11 @@ def parse_report(file_bytes: bytes, filename: str) -> pd.DataFrame:
     """Parse a single report and return a DataFrame of test results."""
     text = ""
 
-    # Try ZIP format first (some exports are ZIP archives with .pdf extension)
     try:
-        text = extract_text_from_zip(file_bytes)
-    except zipfile.BadZipFile:
-        pass
-
-    # Fall back to real PDF extraction
-    if not text.strip():
-        try:
-            text = extract_text_from_pdf(file_bytes)
-        except Exception as e:
-            st.warning(f"Could not read **{filename}**: {e}")
-            return pd.DataFrame()
+        text = extract_text_from_pdf(file_bytes)
+    except Exception as e:
+        st.warning(f"Could not read **{filename}**: {e}")
+        return pd.DataFrame()
 
     if not text.strip():
         st.warning(f"**{filename}** — no text could be extracted.")
@@ -171,7 +152,7 @@ uploaded_files = st.file_uploader(
     "Upload Report PDFs",
     type=["pdf"],
     accept_multiple_files=True,
-    help="These are ZIP-based report files with a .pdf extension.",
+    help="Upload .pdf report files.",
 )
 
 if uploaded_files:
