@@ -5,106 +5,76 @@ Program is a parser to take a specific pdf and let you easily copy/filter it
 
 import io
 import re
+from datetime import datetime
 
 import pandas as pd
 import pdfplumber
 import streamlit as st
 
-# ── Page config ───────────────────────────────────────────────────────
+#Initial streamlit page configuration - title, icon, layout
 st.set_page_config(
     page_title="Report Parser",
     page_icon="🔥",
     layout="wide",
 )
 
+#Parsing functions
 
-# ── Parsing functions ─────────────────────────────────────────────────
+### Do not change, report pdfs have terrible formatting. re.match() takes way too long.
+ROW_PATTERN = re.compile(r"""
+    ^(\d{1,3})          \s+   # col 1: row number
+    \d{1,2}:\d{2}:\d{2} \s+   # timestamp (ignored)
+    (\d{1,3})           \s+   # col 2: test number
+    ([\-\d.]+)          \s+   # col 3: C1 (mBar)
+    ([\-\d.,]+)         \s+   # col 4: C2 (mBar)
+    ([\-\d.]+)          \s+   # col 5: Diff C2 (mBar)
+    ([\-\d.]+)          \s+   # col 6: C3 (Pa)
+    (.+?)               \s+   # col 7: comment
+    (Pass|Fail)         \s*$  # col 8: result
+""", re.IGNORECASE | re.VERBOSE)
 
-MONTHS = {
-    "jan": "01", "feb": "02", "mar": "03", "apr": "04",
-    "may": "05", "jun": "06", "jul": "07", "aug": "08",
-    "sep": "09", "oct": "10", "nov": "11", "dec": "12",
-}
+#Formats a regex match into MM/DD/YYYY
+def make_date(m):
+    day, mon_str, year = m.group(1), m.group(2), m.group(3)
+    try:
+        parsed = datetime.strptime(mon_str[:3], "%b")
+        mon = parsed.month
+    except ValueError:
+        mon = 0
+    return f"{str(mon).zfill(2)}/{day.zfill(2)}/{year}"
 
-ROW_PATTERN = re.compile(
-    r"^(\d{1,3})\s+"
-    r"\d{1,2}:\d{2}:\d{2}\s+"
-    r"(\d{1,3})\s+"
-    r"([\-\d.]+)\s+"
-    r"([\-\d.,]+)\s+"
-    r"([\-\d.]+)\s+"
-    r"([\-\d.]+)\s+"
-    r"(.+?)\s+"
-    r"(Pass|Fail)\s*$",
-    re.IGNORECASE,
-)
-
-
-
-def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Extract text from a real PDF using pdfplumber."""
-    full_text = ""
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                full_text += text + "\n\n"
-    return full_text
-
-
-def parse_batch_date(text: str) -> str:
-    """Extract and format the Batch Start date as MM/DD/YYYY."""
-    # Format in these files:
-    #   Batch Start
-    #   Batch End
-    #   10-Apr-2025 16:39:23    ← start date
-    #   10-Apr-2025 17:48:55    ← end date
-    m = re.search(
-        r"Batch\s*Start\s*[\r\n]+"
-        r"Batch\s*End\s*[\r\n]+"
-        r"(\d{1,2})-(\w{3})-(\d{4})",
-        text, re.IGNORECASE,
-    )
+#Converts batch date to the desired format for excels with multiple days of results.
+def get_date(text):
+    m = re.search(r"Batch\s*Start\s*[\r\n]+Batch\s*End\s*[\r\n]+(\d{1,2})-(\w{3})-(\d{4})", text, re.IGNORECASE)
     if not m:
-        # Fallback: Batch Start immediately followed by date
-        m = re.search(
-            r"Batch\s*Start\s*[\r\n]+(\d{1,2})-(\w{3})-(\d{4})",
-            text, re.IGNORECASE,
-        )
+        m = re.search(r"Batch\s*Start\s*[\r\n]+(\d{1,2})-(\w{3})-(\d{4})", text, re.IGNORECASE)
     if not m:
-        # Fallback: first date-like pattern in text
         m = re.search(r"(\d{1,2})-(\w{3})-(\d{4})", text, re.IGNORECASE)
-
+    if not m:
+        m = re.search(r"(\d{1,2})([A-Z]{3})(\d{4})", text)
     if m:
-        day, mon_str, year = m.group(1), m.group(2).lower()[:3], m.group(3)
-        mon = MONTHS.get(mon_str, "00")
-        return f"{mon}/{day.zfill(2)}/{year}"
-
-    # Fallback: batch title pattern like "10APR2025"
-    m = re.search(r"(\d{1,2})([A-Z]{3})(\d{4})", text)
-    if m:
-        day, mon_str, year = m.group(1), m.group(2).lower()[:3], m.group(3)
-        mon = MONTHS.get(mon_str, "00")
-        return f"{mon}/{day.zfill(2)}/{year}"
-
+        return make_date(m)
     return ""
 
-
-def parse_report(file_bytes: bytes, filename: str) -> pd.DataFrame:
-    """Parse a single report and return a DataFrame of test results."""
-    text = ""
-
+#Parses report and returns dataframe of results.
+def read_pdf(raw_pdf, filename):
     try:
-        text = extract_text_from_pdf(file_bytes)
+        pdf_file = io.BytesIO(raw_pdf)
+        with pdfplumber.open(pdf_file) as pdf:
+            text = ""
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t:
+                    text += t + "\n\n"
     except Exception as e:
-        st.warning(f"Could not read **{filename}**: {e}")
+        st.warning(f"Could not read {filename}: {e}")
         return pd.DataFrame()
 
     if not text.strip():
-        st.warning(f"**{filename}** — no text could be extracted.")
+        st.warning(f"{filename} - no text could be extracted.")
         return pd.DataFrame()
 
-    batch_date = parse_batch_date(text)
+    batch_date = get_date(text)
     rows = []
 
     for line in text.split("\n"):
@@ -116,7 +86,7 @@ def parse_report(file_bytes: bytes, filename: str) -> pd.DataFrame:
         if m:
             comment = m.group(7).strip()
             result = m.group(8).capitalize()
-            if comment.lower() in ("comments", "result"):
+            if comment.lower() == "comments" or comment.lower() == "result":
                 continue
 
             rows.append({
@@ -133,21 +103,17 @@ def parse_report(file_bytes: bytes, filename: str) -> pd.DataFrame:
 
     return pd.DataFrame(rows)
 
-
-
-# ── Session state init ────────────────────────────────────────────────
+# Initialize session
 if "data" not in st.session_state:
     st.session_state.data = pd.DataFrame()
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = set()
 
-
-# ── Header ────────────────────────────────────────────────────────────
+# Webpage UI
 st.title("PDF Parser to make my life easier")
 st.caption("Upload pdf filter results, can export/copy CSV")
 
-
-# ── File upload ───────────────────────────────────────────────────────
+#Add streamlit file uploader
 uploaded_files = st.file_uploader(
     "Upload Report PDFs",
     type=["pdf"],
@@ -156,38 +122,37 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    new_frames = []
+    new_dfs = []
     for f in uploaded_files:
-        # Skip already-processed files (by name + size)
+        # Skips files that are duplicates, accidentally uploaded triplicate files once.
         file_key = f"{f.name}_{f.size}"
         if file_key not in st.session_state.processed_files:
-            df = parse_report(f.read(), f.name)
+            df = read_pdf(f.read(), f.name)
             if not df.empty:
-                new_frames.append(df)
+                new_dfs.append(df)
                 st.session_state.processed_files.add(file_key)
 
-    if new_frames:
-        st.session_state.data = pd.concat(
-            [st.session_state.data] + new_frames, ignore_index=True
-        )
+#added due to bug when initially trying to use index lookups. Index lookups not being used but keeping this just in case.
+    if new_dfs:
+        combined = [st.session_state.data] + new_dfs
+        st.session_state.data = pd.concat(combined, ignore_index=True)
 
-df_all = st.session_state.data
+all_data = st.session_state.data
 
-if df_all.empty:
+if all_data.empty:
     st.info("Upload one or more PDFs to get started.")
     st.stop()
 
-
-# ── Sidebar filters ──────────────────────────────────────────────────
+###### Sidebar filters - critical part of making the app useful.
 with st.sidebar:
     st.header("Filters")
 
     # Source file
-    sources = ["All Files"] + sorted(df_all["Source"].unique().tolist())
-    selected_source = st.selectbox("Source File", sources)
+    sources = ["All Files"] + sorted(all_data["Source"].unique().tolist())
+    picked_file = st.selectbox("Source File", sources)
 
     # Result filter
-    result_filter = st.radio("Result", ["All", "Pass", "Fail"], horizontal=True)
+    show_result = st.radio("Result", ["All", "Pass", "Fail"], horizontal=True)
 
     # Warm-up toggle
     exclude_warmup = st.checkbox("Exclude warm-up tests", value=False)
@@ -205,15 +170,14 @@ with st.sidebar:
         st.session_state.processed_files = set()
         st.rerun()
 
+# Apply filters to data
+df = all_data.copy()
 
-# ── Apply filters ─────────────────────────────────────────────────────
-df = df_all.copy()
+if picked_file != "All Files":
+    df = df[df["Source"] == picked_file]
 
-if selected_source != "All Files":
-    df = df[df["Source"] == selected_source]
-
-if result_filter != "All":
-    df = df[df["Result"] == result_filter]
+if show_result != "All":
+    df = df[df["Result"] == show_result]
 
 if exclude_warmup:
     df = df[~df["Comment"].str.lower().str.contains("warm")]
@@ -221,28 +185,27 @@ if exclude_warmup:
 if comment_text.strip():
     ct = comment_text.strip().lower()
     if comment_mode == "Contains":
-        df = df[df["Comment"].str.lower().str.contains(ct, na=False)]
+        df = df[df["Comment"].str.lower().str.contains(ct, na=False)]  # na=False prevents crash on empty comment cells
     elif comment_mode == "Exact":
         df = df[df["Comment"].str.lower() == ct]
     elif comment_mode == "Starts with":
         df = df[df["Comment"].str.lower().str.startswith(ct)]
 
+# Summary metrics, not actual results but useful for quick overview if uploading a lot of files.
+total = len(all_data)
+passes = len(all_data[all_data["Result"] == "Pass"])
+fails = len(all_data[all_data["Result"] == "Fail"])
+pass_rate = f"{passes / total * 100:.1f}%" if total > 0 else "—"
 
-# ── Summary cards ─────────────────────────────────────────────────────
-total_all = len(df_all)
-pass_all = (df_all["Result"] == "Pass").sum()
-fail_all = (df_all["Result"] == "Fail").sum()
-pass_rate = f"{pass_all / total_all * 100:.1f}%" if total_all > 0 else "—"
-
+#Summary metrics columns
 col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("Total Tests", total_all)
-col2.metric("Passed", pass_all)
-col3.metric("Failed", fail_all)
+col1.metric("Total Tests", total)
+col2.metric("Passed", passes)
+col3.metric("Failed", fails)
 col4.metric("Pass Rate", pass_rate)
 col5.metric("Showing", len(df))
 
-
-# ── Data table ────────────────────────────────────────────────────────
+# Display filtered results in table.
 if df.empty:
     st.warning("No results match the current filters.")
 else:
