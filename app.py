@@ -143,7 +143,7 @@ if "processed_files" not in st.session_state:
 
 
 # ── Header ────────────────────────────────────────────────────────────
-st.title("PDF Parser")
+st.title("PDF Parser to make my life easier")
 st.caption("Upload pdf filter results, can export/copy CSV")
 
 
